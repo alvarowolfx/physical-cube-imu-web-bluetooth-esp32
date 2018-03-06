@@ -5,6 +5,7 @@ import { SketchPicker } from 'react-color';
 import { Throttle } from 'react-throttle';
 import './App.css';
 import MinecraftBlock from './MinecraftBlock';
+import BLEBlock from './BLEBlock';
 
 class App extends Component {
   state = {
@@ -13,7 +14,8 @@ class App extends Component {
     selectedHex: '#FF0000',
     data: {
       acc: { x: 0, y: 0, z: 0 },
-      gyro: { x: 0, y: 0, z: 0 }
+      gyro: { x: 0, y: 0, z: 0 },
+      angle: { x: 0, y: 0, z: 0 }
     },
     block: null,
     cubeRotation: new THREE.Euler(-50, 100, 100)
@@ -30,9 +32,11 @@ class App extends Component {
   _onAnimate = () => {
     const { data, connected } = this.state;
     if (connected) {
-      let { gyro: { x, y, z } } = data;
-      const mapAcc = value => -1 * value * Math.PI / 180;
-      x = mapAcc(x) * -1;
+      let { angle: { x, y, z } } = data;
+      const mapAcc = value => {
+        return -1 * value * Math.PI / 180;
+      };
+      x = mapAcc(x);
       y = mapAcc(y);
       z = mapAcc(z);
 
@@ -43,7 +47,7 @@ class App extends Component {
   };
 
   connect = async () => {
-    const block = new MinecraftBlock();
+    const block = new BLEBlock();
     await block.connect();
 
     block.updateColor(this.state.selectedColor);
@@ -72,25 +76,6 @@ class App extends Component {
     }
   };
 
-  sync = () => {
-    const { colors, selectedLed, mode, speed } = this.state;
-    if (selectedLed === 'all') {
-      this.sendData(255, colors[0]);
-    } else {
-      for (let i = 0; i < colors.length; i++) {
-        this.sendData(i, colors[i]);
-      }
-    }
-    this.sendMode(mode);
-    this.sendSpeed(speed);
-  };
-
-  onToggleAll = () => {
-    this.setState({
-      selectedLed: 'all'
-    });
-  };
-
   handleColorChange = color => {
     const { rgb, hex } = color;
     const { block } = this.state;
@@ -108,7 +93,13 @@ class App extends Component {
     const width = window.innerWidth; // canvas width
     const height = window.innerHeight - 100; // canvas height
 
-    const { connected, selectedColor, data, selectedHex } = this.state;
+    const {
+      connected,
+      selectedColor,
+      data,
+      selectedHex,
+      cubeRotation
+    } = this.state;
     return (
       <div className="app">
         <header>
@@ -122,19 +113,8 @@ class App extends Component {
             onAnimate={this._onAnimate}
           >
             <resources>
-              <texture
-                resourceId="texture"
-                url="images/redstone.png"
-                wrapS={THREE.RepeatWrapping}
-                wrapT={THREE.RepeatWrapping}
-                anisotropy={16}
-              />
-              <meshLambertMaterial
-                resourceId="material"
-                side={THREE.DoubleSide}
-              >
-                <textureResource resourceId="texture" />
-              </meshLambertMaterial>
+              <MinecraftBlock.Texture />
+              <MinecraftBlock.Material />
             </resources>
             <scene>
               <ambientLight color={selectedHex} />
@@ -151,11 +131,7 @@ class App extends Component {
                 far={100}
                 position={this.cameraPosition}
               />
-              <mesh rotation={this.state.cubeRotation}>
-                <boxGeometry width={1} height={1} depth={1} />
-                {/* <meshBasicMaterial color={selectedHex} />*/}
-                <materialResource resourceId="material" />
-              </mesh>
+              <MinecraftBlock rotation={cubeRotation} />
             </scene>
           </React3>
           <div style={{ position: 'absolute', left: 0, top: 100 }}>
@@ -179,6 +155,7 @@ class App extends Component {
               <br />
               Gyroscope: <br /> {JSON.stringify(data.gyro)}
               <br />
+              Angle: <br /> {JSON.stringify(data.angle)}
             </div>
           </div>
         </div>

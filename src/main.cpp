@@ -14,6 +14,7 @@
 #define IMU_SERVICE_UUID "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
 #define ACC_CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26b8"
 #define GYRO_CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
+#define ANGLE_CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26c8"
 
 #define COLOR_SERVICE_UUID "5051269d-7791-4332-b534-c6caab0ae14b"
 #define COLOR_CHARACTERISTIC_UUID "3bac26a0-e902-44d5-8820-d8698543147b"
@@ -56,6 +57,7 @@ BLEServer *pServer = NULL;
 BLEService *imuService = NULL;
 BLECharacteristic *accelerometerDataCharacteristic = NULL;
 BLECharacteristic *gyroscopeDataCharacteristic = NULL;
+BLECharacteristic *angleDataCharacteristic = NULL;
 BLEService *colorService = NULL;
 BLECharacteristic *colorDataCharacteristic = NULL;
 BLEAdvertising *pAdvertising = NULL;
@@ -68,11 +70,15 @@ BLEAdvertising *pAdvertising = NULL;
 #define ACCEL_XOUT 0x3B
 
 //Sensors Data
-#define SAMPLE_SIZE 10
+#define SAMPLE_SIZE 30
 int16_t AcX[SAMPLE_SIZE], AcY[SAMPLE_SIZE], AcZ[SAMPLE_SIZE], Tmp[SAMPLE_SIZE], GyX[SAMPLE_SIZE], GyY[SAMPLE_SIZE], GyZ[SAMPLE_SIZE];
 int currentSampleIndex = 0;
 Madgwick filter;
 
+const int ACC_MODE = 0;
+const int GYRO_MODE = 0;
+float gyroScales[4] = {131.0f, 65.5f, 32.8f, 16.4f};
+float accScales[4] = {16384.0f, 8192.0f, 4096.0f, 2048.0f};
 /* SCALING FACTORS 
 
 Angular Velocity Limit  |   Sensitivity
@@ -110,8 +116,8 @@ void setupMPU()
 {
     Wire.begin(21, 22);
     writeRegMPU(PWR_MGMT_1, 0);
-    writeRegMPU(GYRO_CONFIG, 0);  // Gyro config
-    writeRegMPU(ACCEL_CONFIG, 0); // Acc config
+    writeRegMPU(GYRO_CONFIG, GYRO_MODE); // Gyro config
+    writeRegMPU(ACCEL_CONFIG, ACC_MODE); // Acc config
 }
 
 void readMPU()
@@ -157,7 +163,7 @@ void setup()
     ws2812fx.setBrightness(FX_BRIGHTNESS);
     ws2812fx.setSpeed(FX_SPEED);
     ws2812fx.setColor(0x00FF00);
-    ws2812fx.setMode(FX_MODE_FADE);
+    ws2812fx.setMode(FX_MODE_BREATH);
     ws2812fx.start();
 
     BLEDevice::init("AwesomeMinecraftBlock");
@@ -170,6 +176,9 @@ void setup()
         BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
     gyroscopeDataCharacteristic = imuService->createCharacteristic(
         GYRO_CHARACTERISTIC_UUID,
+        BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
+    angleDataCharacteristic = imuService->createCharacteristic(
+        ANGLE_CHARACTERISTIC_UUID,
         BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
     imuService->start();
 
@@ -192,19 +201,20 @@ void setup()
 void loop()
 {
     // Make sure to call update as fast as possible
-    readMPU();
     ws2812fx.service();
+    readMPU();
 
     long dT = millis() - lastSample;
     if (dT > SAMPLE_RATE)
     {
-        float ax = avgSample(AcX) / 16384.0f;
-        float ay = avgSample(AcY) / 16384.0f;
-        float az = avgSample(AcZ) / 16384.0f;
 
-        float gx = avgSample(GyX) / 131.0f;
-        float gy = avgSample(GyY) / 131.0f;
-        float gz = avgSample(GyZ) / 131.0f;
+        float ax = avgSample(AcX) / accScales[ACC_MODE] + 0.08f;
+        float ay = avgSample(AcY) / accScales[ACC_MODE] - 0.04f;
+        float az = avgSample(AcZ) / accScales[ACC_MODE] + 0.07f;
+
+        float gx = avgSample(GyX) / gyroScales[GYRO_MODE];
+        float gy = avgSample(GyY) / gyroScales[GYRO_MODE];
+        float gz = avgSample(GyZ) / gyroScales[GYRO_MODE];
 
         float gyroScale = 0.5f;
 
@@ -216,13 +226,13 @@ void loop()
 
     if (dT > REPORTING_PERIOD_MS)
     {
-        float ax = avgSample(AcX) / 16384.0f;
-        float ay = avgSample(AcY) / 16384.0f;
-        float az = avgSample(AcZ) / 16384.0f;
+        float ax = avgSample(AcX) / accScales[ACC_MODE] + 0.08f;
+        float ay = avgSample(AcY) / accScales[ACC_MODE] - 0.04f;
+        float az = avgSample(AcZ) / accScales[ACC_MODE] + 0.07f;
 
-        float gx = avgSample(GyX) / 131.0f;
-        float gy = avgSample(GyY) / 131.0f;
-        float gz = avgSample(GyZ) / 131.0f;
+        float gx = avgSample(GyX) / gyroScales[GYRO_MODE];
+        float gy = avgSample(GyY) / gyroScales[GYRO_MODE];
+        float gz = avgSample(GyZ) / gyroScales[GYRO_MODE];
 
         float roll = filter.getRoll();
         float pitch = filter.getPitch();
@@ -266,9 +276,14 @@ void loop()
         azReading.value = az;
 
         Reading gxReading, gyReading, gzReading;
-        gxReading.value = roll;
-        gyReading.value = pitch;
-        gzReading.value = heading;
+        gxReading.value = gx;
+        gyReading.value = gy;
+        gzReading.value = gz;
+
+        Reading agxReading, agyReading, agzReading;
+        agxReading.value = roll;
+        agyReading.value = pitch;
+        agzReading.value = heading;
 
         uint8_t accData[12] = {
             (uint8_t)axReading.bytes[0],
@@ -298,11 +313,28 @@ void loop()
             (uint8_t)gzReading.bytes[2],
             (uint8_t)gzReading.bytes[3]};
 
+        uint8_t angleData[12] = {
+            (uint8_t)agxReading.bytes[0],
+            (uint8_t)agxReading.bytes[1],
+            (uint8_t)agxReading.bytes[2],
+            (uint8_t)agxReading.bytes[3],
+            (uint8_t)agyReading.bytes[0],
+            (uint8_t)agyReading.bytes[1],
+            (uint8_t)agyReading.bytes[2],
+            (uint8_t)agyReading.bytes[3],
+            (uint8_t)agzReading.bytes[0],
+            (uint8_t)agzReading.bytes[1],
+            (uint8_t)agzReading.bytes[2],
+            (uint8_t)agzReading.bytes[3]};
+
         accelerometerDataCharacteristic->setValue(accData, 12);
         //accelerometerDataCharacteristic->notify();
 
         gyroscopeDataCharacteristic->setValue(gyroData, 12);
         //gyroscopeDataCharacteristic->notify();
+
+        angleDataCharacteristic->setValue(angleData, 12);
+        //angleDataCharacteristic->notify();
 
         lastReport = millis();
     }
